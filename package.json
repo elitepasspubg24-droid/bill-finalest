@@ -3,13 +3,11 @@
   "private": true,
   "sideEffects": false,
   "type": "module",
-  "scripts": {
-    "dev": "vinxi dev",
-    "build": "vinxi build",
-    "start": "vinxi start",
-    "lint": "eslint .",
-    "format": "prettier --write ."
-  },
+ "scripts": {
+  "dev": "vinxi dev",
+  "build": "vinxi build",
+  "start": "vinxi start"
+},
   "dependencies": {
     "vinxi": "0.5.1",
     "@hookform/resolvers": "^5.2.2",
