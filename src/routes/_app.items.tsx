@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Pencil, Check, X, Search } from "lucide-react";
+import { List, Pencil, Check, X, Search } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_app/items")({
@@ -22,10 +22,17 @@ function ItemsPage() {
   const saudas = useQuery({ queryKey: ["saudas"], queryFn: fetchSaudas });
   
   const [q, setQ] = useState("");
-  // localSaudaMap stores: { [sectionId]: selectedSaudaId }
   const [localSaudaMap, setLocalSaudaMap] = useState<Record<string, string>>({});
   const [isEditingGauges, setIsEditingGauges] = useState(false);
   const [tempGauges, setTempGauges] = useState<Record<string, string>>({});
+
+  // Helper to calculate pending qty for sauda display
+  const getSaudaDetails = (s: any) => {
+    const itemsTotal = (s.sauda_items ?? []).reduce((a: number, r: any) => a + Number(r.qty || 0), 0);
+    const total = Number(s.total_qty || 0) || itemsTotal;
+    const pending = Math.max(0, total - Number(s.lifted_qty || 0));
+    return { pending, basic: s.sauda_basic, party: s.party_name };
+  };
 
   const updateGaugesMut = useMutation({
     mutationFn: async () => {
@@ -34,7 +41,7 @@ function ItemsPage() {
       }
     },
     onSuccess: () => {
-      toast.success("Gauge Differences updated");
+      toast.success("Gauges Updated");
       setIsEditingGauges(false);
       qc.invalidateQueries({ queryKey: ["items"] });
     },
@@ -49,11 +56,9 @@ function ItemsPage() {
       const f = fmap.get(s.factory_id);
       const baseToday = (f?.basic_rate ?? 0) + Number(s.adder);
       
-      // Look up Sauda Rate based on what is selected for THIS specific section
       const selectedSaudaId = localSaudaMap[s.id];
       const selectedSauda = selectedSaudaId ? smap.get(selectedSaudaId) : null;
       const baseSauda = selectedSauda ? Number(selectedSauda.sauda_basic) + Number(s.adder) : null;
-      
       const baseParty = Number(s.party_basic);
 
       const rows = items.data!.filter((i) => i.section_id === s.id && (!q || i.name.toLowerCase().includes(q.toLowerCase())))
@@ -63,106 +68,108 @@ function ItemsPage() {
           sauda: baseSauda === null ? null : baseSauda + Number(i.gauge_diff),
           party: baseParty + Number(i.gauge_diff),
         }));
-      return { section: s, factory: f, rows };
+      
+      return { section: s, factory: f, selectedSauda, rows };
     }).filter((g) => g.rows.length > 0);
   }, [factories.data, sections.data, items.data, saudas.data, localSaudaMap, q]);
 
   return (
-    <div className="space-y-6 pb-20">
-      {/* Search & Edit Gauges Bar - Stays at top under main nav */}
-      <div className="sticky top-[53px] z-40 bg-background/95 backdrop-blur py-3 border-b flex items-center justify-between gap-4">
-        <div className="relative flex-1 max-w-md">
+    <div className="space-y-4 pb-20">
+      {/* Top Search bar */}
+      <div className="sticky top-[53px] z-40 bg-background/95 backdrop-blur border-b py-3 px-4 flex items-center justify-between gap-4 -mx-4 sm:mx-0 sm:rounded-xl sm:border shadow-sm">
+        <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input placeholder="Search all items..." value={q} onChange={(e) => setQ(e.target.value)} className="pl-9 h-10" />
+          <Input placeholder="Search items..." value={q} onChange={(e) => setQ(e.target.value)} className="pl-9 h-9" />
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => setIsEditingGauges(!isEditingGauges)}>
             {isEditingGauges ? "Cancel" : "Edit Gauges"}
           </Button>
-          {isEditingGauges && (
-            <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => updateGaugesMut.mutate()}>
-              Save All
-            </Button>
-          )}
+          {isEditingGauges && <Button size="sm" className="bg-green-600" onClick={() => updateGaugesMut.mutate()}>Save</Button>}
         </div>
       </div>
 
-      {grouped.map(({ section, factory, rows }) => (
-        <Card key={section.id} id={`section-${section.id}`} className="overflow-visible border-none shadow-none sm:border sm:shadow-sm">
-          
-          {/* CATEGORY HEADER: Sticks below the Search Bar */}
-          <CardHeader className="sticky top-[110px] z-30 bg-slate-100 dark:bg-slate-900 py-3 px-4 border-y">
-            <CardTitle className="text-sm font-bold flex flex-wrap items-center justify-between gap-4">
-              <div className="flex items-center gap-2">
-                <span className="uppercase tracking-tight">{section.name}</span>
-                <span className="text-[10px] font-normal text-muted-foreground">({factory?.name} @ {factory?.basic_rate})</span>
-              </div>
+      {grouped.map(({ section, factory, selectedSauda, rows }) => {
+        const saudaInfo = selectedSauda ? getSaudaDetails(selectedSauda) : null;
+        
+        return (
+          <Card key={section.id} className="overflow-visible border-none shadow-none sm:border sm:shadow-sm mb-8">
+            {/* STICKY SECTION HEADER MATCHING IMAGE */}
+            <CardHeader className="sticky top-[107px] z-30 bg-white border-y py-3 px-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-baseline gap-2 overflow-hidden">
+                  <h3 className="font-bold text-lg whitespace-nowrap uppercase">{section.name}</h3>
+                  <span className="text-xs text-muted-foreground truncate">
+                    ({factory?.name} {factory?.basic_rate} + {section.adder} adder
+                    {saudaInfo ? ` · sauda ${saudaInfo.basic} from ${saudaInfo.party} (${saudaInfo.pending} pending)` : " · no sauda selected"})
+                  </span>
+                </div>
 
-              {/* INDIVIDUAL SAUDA PICKER FOR THIS CATEGORY */}
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-medium text-muted-foreground uppercase">Sauda:</span>
-                <Select 
-                  value={localSaudaMap[section.id] || "none"} 
-                  onValueChange={(val) => setLocalSaudaMap(prev => ({...prev, [section.id]: val}))}
-                >
-                  <SelectTrigger className="h-7 w-[220px] text-[10px] bg-background">
-                    <SelectValue placeholder="Select Sauda..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none" className="text-xs text-red-500">None (Show Today's)</SelectItem>
-                    {saudas.data?.filter((s: any) => s.status !== "done").map((s: any) => (
-                      <SelectItem key={s.id} value={s.id} className="text-xs">
-                        {s.party_name} — {s.sauda_basic}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-sm text-muted-foreground">Sauda:</span>
+                  <Select 
+                    value={localSaudaMap[section.id] || "none"} 
+                    onValueChange={(v) => setLocalSaudaMap(p => ({...p, [section.id]: v}))}
+                  >
+                    <SelectTrigger className="h-9 w-full sm:w-[280px] bg-background">
+                      <SelectValue placeholder="Select Sauda..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none" className="text-red-500">-- None --</SelectItem>
+                      {saudas.data?.filter((s: any) => s.status !== "done").map((s: any) => {
+                        const d = getSaudaDetails(s);
+                        return (
+                          <SelectItem key={s.id} value={s.id}>
+                            {d.party} — basic {d.basic} ({d.pending} pending)
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
-            </CardTitle>
-          </CardHeader>
-          
-          <CardContent className="p-0 overflow-visible">
-            <table className="w-full text-sm border-collapse">
-              {/* TABLE HEADERS: Sticks below the Category Header */}
-              <thead className="sticky top-[163px] z-20 hidden sm:table-header-group bg-white dark:bg-slate-950 border-b shadow-sm">
-                <tr className="text-muted-foreground text-left text-[11px] font-bold uppercase">
-                  <th className="p-3">Item</th>
-                  <th className="p-3 text-right">Gauge Diff</th>
-                  <th className="p-3 text-right text-blue-600">Today's Rate</th>
-                  <th className="p-3 text-right text-orange-600">Sauda Rate</th>
-                  <th className="p-3 text-right">Party Rate</th>
-                  <th className="p-3 text-right">Available Qty</th>
-                  <th className="p-3 text-right">Last Purchase</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {rows.map((r) => (
-                  <tr key={r.id} className="hover:bg-muted/40 transition-colors">
-                    <td className="p-3 font-semibold">{r.name}</td>
-                    <td className="p-3 text-right">
-                      {isEditingGauges ? (
-                        <Input 
-                          className="h-7 w-16 ml-auto text-right text-xs font-bold border-primary" 
-                          type="number" 
-                          value={tempGauges[r.id] ?? r.gauge_diff}
-                          onChange={(e) => setTempGauges({ ...tempGauges, [r.id]: e.target.value })} 
-                        />
-                      ) : (
-                        <span className="text-muted-foreground font-mono">{r.gauge_diff > 0 ? `+${r.gauge_diff}` : r.gauge_diff}</span>
-                      )}
-                    </td>
-                    <td className="p-3 text-right font-mono font-bold text-blue-600">{r.today.toFixed(0)}</td>
-                    <td className="p-3 text-right font-mono font-bold text-orange-600">{r.sauda === null ? "—" : r.sauda.toFixed(0)}</td>
-                    <td className="p-3 text-right font-mono">{r.party.toFixed(0)}</td>
-                    <td className="p-3 text-right tabular-nums">{Number(r.available_qty).toFixed(2)}</td>
-                    <td className="p-3 text-right text-xs text-muted-foreground">{r.last_purchase_rate ?? "—"}</td>
+            </CardHeader>
+
+            <CardContent className="p-0 overflow-visible">
+              <table className="w-full text-sm border-collapse">
+                {/* STICKY COLUMN NAMES */}
+                <thead className="sticky top-[164px] z-20 hidden sm:table-header-group bg-slate-50/80 backdrop-blur border-b">
+                  <tr className="text-left text-muted-foreground font-semibold">
+                    <th className="p-3">Item</th>
+                    <th className="p-3 text-right">Gauge Diff</th>
+                    <th className="p-3 text-right">Today's Rate</th>
+                    <th className="p-3 text-right">Sauda Rate</th>
+                    <th className="p-3 text-right">Party Rate</th>
+                    <th className="p-3 text-right">Available Qty</th>
+                    <th className="p-3 text-right">Last Purchase</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </CardContent>
-        </Card>
-      ))}
+                </thead>
+                <tbody className="divide-y">
+                  {rows.map((r) => (
+                    <tr key={r.id} className="hover:bg-muted/30 font-medium">
+                      <td className="p-3">{r.name}</td>
+                      <td className="p-3 text-right">
+                        {isEditingGauges ? (
+                          <Input className="h-7 w-16 ml-auto text-right text-xs" type="number" 
+                            value={tempGauges[r.id] ?? r.gauge_diff}
+                            onChange={(e) => setTempGauges({ ...tempGauges, [r.id]: e.target.value })} />
+                        ) : (
+                          <span className="text-muted-foreground">{r.gauge_diff > 0 ? `+${r.gauge_diff}` : r.gauge_diff}</span>
+                        )}
+                      </td>
+                      <td className="p-3 text-right font-mono font-bold">{r.today.toFixed(0)}</td>
+                      <td className="p-3 text-right font-mono font-bold text-orange-600">{r.sauda?.toFixed(0) ?? "—"}</td>
+                      <td className="p-3 text-right font-mono">{r.party.toFixed(0)}</td>
+                      <td className="p-3 text-right tabular-nums">{Number(r.available_qty).toFixed(2)}</td>
+                      <td className="p-3 text-right text-xs text-muted-foreground truncate max-w-[100px]">{r.last_purchase_rate ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </CardContent>
+          </Card>
+        );
+      })}
     </div>
   );
 }
